@@ -53,7 +53,7 @@ publishing {
         create<MavenPublication>("maven") {
 
             groupId = "com.github.JeffWright"
-            version = "0.2.0"
+            version = "0.2.1"
             artifactId = "kt-sheets"
 
             from(components["java"])

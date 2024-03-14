@@ -12,8 +12,13 @@ import com.google.api.services.sheets.v4.model.ClearValuesResponse
 import com.google.api.services.sheets.v4.model.UpdateValuesResponse
 import com.google.api.services.sheets.v4.model.ValueRange
 import com.google.auth.http.HttpCredentialsAdapter
+import com.google.auth.oauth2.AccessToken
 import com.google.auth.oauth2.GoogleCredentials
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.InputStream
+import java.time.Instant
+import java.util.Date
 
 class GoogleSheetsService(private val service: Sheets) {
   companion object {
@@ -31,10 +36,25 @@ class GoogleSheetsService(private val service: Sheets) {
         "File not found: ${credentialsJsonFile.absolutePath}"
       }
 
-      val httpTransport: NetHttpTransport = GoogleNetHttpTransport.newTrustedTransport()
       val googleCredentials: GoogleCredentials =
         GoogleCredentials.fromStream(credentialsJsonFile.inputStream())
+      return create(applicationName, googleCredentials)
+    }
 
+    /**
+     * @param accessToken: To create a service account and get keys for it, go to:
+     * https://console.cloud.google.com/iam-admin/serviceaccounts
+     */
+    fun create(
+      applicationName: String,
+      credentialsJson: String,
+    ): GoogleSheetsService {
+      val googleCredentials = GoogleCredentials.fromStream(ByteArrayInputStream(credentialsJson.encodeToByteArray()))
+      return create(applicationName, googleCredentials)
+    }
+
+    private fun create(applicationName: String, googleCredentials: GoogleCredentials): GoogleSheetsService {
+      val httpTransport: NetHttpTransport = GoogleNetHttpTransport.newTrustedTransport()
       val service: Sheets =
         Sheets.Builder(httpTransport, JSON_FACTORY, HttpCredentialsAdapter(googleCredentials))
           .setApplicationName(applicationName)
@@ -43,6 +63,7 @@ class GoogleSheetsService(private val service: Sheets) {
       return GoogleSheetsService(service)
     }
   }
+
 
   fun getSheet(
     spreadsheetId: String,
@@ -56,7 +77,7 @@ class GoogleSheet
 internal constructor(
   val spreadsheetId: String,
   val sheetName: String,
-  private val service: Sheets
+  private val service: Sheets,
 ) {
   companion object {
     const val FULL_SHEET = "A1:ZZ"
@@ -97,7 +118,7 @@ internal constructor(
   fun writeRange(
     values: List<List<Any?>>,
     range: String = FULL_SHEET,
-    parseInput: Boolean = false
+    parseInput: Boolean = false,
   ) {
     val sheetAndRange = "$sheetName!$range"
     val valueInputOption: String = if (parseInput) "USER_ENTERED" else "RAW"
@@ -139,7 +160,7 @@ internal constructor(
     }
     // println("DBG: unknown = $unknownFields")
 
-    val fieldsToWrite = if(appendUnknownFields) fields + unknownFields else fields
+    val fieldsToWrite = if (appendUnknownFields) fields + unknownFields else fields
     val processedValues =
       values.map { value ->
         val fieldMap = value.mapKeys { (k, _) -> Field(k) }
@@ -155,7 +176,7 @@ internal constructor(
       range = "A2:ZZ",
     )
 
-    if(appendUnknownFields) {
+    if (appendUnknownFields) {
       val col = columnIndexToLetter(fields.size + 1)
       writeRange(listOf(unknownFields.map { it.name }), range = "${col}1:ZZ1")
     }
@@ -193,7 +214,7 @@ internal constructor(
   fun <T> readData(
     range: String = FULL_SHEET,
     vararg selectedColumns: String,
-    block: (List<String?>) -> T
+    block: (List<String?>) -> T,
   ): List<T> {
     val sheetAndRange = "$sheetName!$range"
     val data = readRange(sheetAndRange)
@@ -235,6 +256,6 @@ private data class Field(val name: String) {
 /* 1 -> A */
 // TODO: only supports through Z
 private fun columnIndexToLetter(idx: Int): String {
-  return ('A'..'Z').drop(idx-1).first().toString()
+  return ('A'..'Z').drop(idx - 1).first().toString()
 }
 
