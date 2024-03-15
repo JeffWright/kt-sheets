@@ -12,13 +12,9 @@ import com.google.api.services.sheets.v4.model.ClearValuesResponse
 import com.google.api.services.sheets.v4.model.UpdateValuesResponse
 import com.google.api.services.sheets.v4.model.ValueRange
 import com.google.auth.http.HttpCredentialsAdapter
-import com.google.auth.oauth2.AccessToken
 import com.google.auth.oauth2.GoogleCredentials
 import java.io.ByteArrayInputStream
 import java.io.File
-import java.io.InputStream
-import java.time.Instant
-import java.util.Date
 
 class GoogleSheetsService(private val service: Sheets) {
   companion object {
@@ -26,12 +22,9 @@ class GoogleSheetsService(private val service: Sheets) {
 
     /**
      * @param credentialsJsonFile: To create a service account and get keys for it, go to:
-     * https://console.cloud.google.com/iam-admin/serviceaccounts
+     *   https://console.cloud.google.com/iam-admin/serviceaccounts
      */
-    fun create(
-      applicationName: String,
-      credentialsJsonFile: File,
-    ): GoogleSheetsService {
+    fun create(applicationName: String, credentialsJsonFile: File): GoogleSheetsService {
       require(credentialsJsonFile.exists()) {
         "File not found: ${credentialsJsonFile.absolutePath}"
       }
@@ -43,17 +36,18 @@ class GoogleSheetsService(private val service: Sheets) {
 
     /**
      * @param accessToken: To create a service account and get keys for it, go to:
-     * https://console.cloud.google.com/iam-admin/serviceaccounts
+     *   https://console.cloud.google.com/iam-admin/serviceaccounts
      */
-    fun create(
-      applicationName: String,
-      credentialsJson: String,
-    ): GoogleSheetsService {
-      val googleCredentials = GoogleCredentials.fromStream(ByteArrayInputStream(credentialsJson.encodeToByteArray()))
+    fun create(applicationName: String, credentialsJson: String): GoogleSheetsService {
+      val googleCredentials =
+        GoogleCredentials.fromStream(ByteArrayInputStream(credentialsJson.encodeToByteArray()))
       return create(applicationName, googleCredentials)
     }
 
-    private fun create(applicationName: String, googleCredentials: GoogleCredentials): GoogleSheetsService {
+    private fun create(
+      applicationName: String,
+      googleCredentials: GoogleCredentials,
+    ): GoogleSheetsService {
       val httpTransport: NetHttpTransport = GoogleNetHttpTransport.newTrustedTransport()
       val service: Sheets =
         Sheets.Builder(httpTransport, JSON_FACTORY, HttpCredentialsAdapter(googleCredentials))
@@ -64,11 +58,7 @@ class GoogleSheetsService(private val service: Sheets) {
     }
   }
 
-
-  fun getSheet(
-    spreadsheetId: String,
-    sheetName: String = "Sheet1",
-  ): GoogleSheet {
+  fun getSheet(spreadsheetId: String, sheetName: String = "Sheet1"): GoogleSheet {
     return GoogleSheet(spreadsheetId, sheetName, service)
   }
 }
@@ -95,7 +85,8 @@ internal constructor(
   /** Assumes first row is field names, will pass each [createRow] a map of fieldName -> contents */
   fun <T> readRange(range: String = FULL_SHEET, createRow: (Map<String, String>) -> T): List<T> {
     val data = readRange(range)
-    val fields = data.first()
+    val fields =
+      data.firstOrNull() ?: error("${sheetName}: No field names present, cannot readRange()")
     val rows = data.drop(1)
 
     return rows.map { row ->
@@ -113,15 +104,21 @@ internal constructor(
   /**
    * @param range e.g. "A2:E"
    * @param parseInput true if you want "=1+A2" to turn into a formula, false if you want it to be a
-   * string
+   *   string
+   * @param clearRestOfSheet true to fully replace this sheet's contents with [values], false to
+   *   leave data outside [range] untouched
    */
   fun writeRange(
     values: List<List<Any?>>,
     range: String = FULL_SHEET,
     parseInput: Boolean = false,
+    clearRestOfSheet: Boolean = false,
   ) {
     val sheetAndRange = "$sheetName!$range"
     val valueInputOption: String = if (parseInput) "USER_ENTERED" else "RAW"
+    if (clearRestOfSheet) {
+      clearRange()
+    }
     var result: UpdateValuesResponse? = null
     try {
       // Updates the values in the specified range.
@@ -145,22 +142,26 @@ internal constructor(
   }
 
   /**
+   * Clears all data (not field names) in the sheet before writing (full replace)
+   *
    * Assumes first row is field names, will write each value's entries under the corresponding
-   * columns.  Fields are _not_ case-sensitive
+   * columns. Fields are _not_ case-sensitive
+   *
    * @param appendUnknownFields should fields present in the data but not in the Sheet be added to
-   * the Sheet?
+   *   the Sheet?
    */
-  fun writeRange(values: List<Map<String, Any?>>, appendUnknownFields: Boolean = true) {
-    val fields = (readRange("A1:ZZ1").firstOrNull() ?: emptyList())
-      .map { Field(it) }
+  fun writeDataWithHeaders(values: List<Map<String, Any?>>, appendUnknownFields: Boolean = true) {
+
+    val existingFieldNames = (readRange("A1:ZZ1").firstOrNull() ?: emptyList()).map { Field(it) }
     // println("DBG: fields = $fields")
     val unknownFields = buildSet {
       values.forEach { addAll(it.keys.map { Field(it) }) }
-      fields.forEach { remove(it) }
+      existingFieldNames.forEach { remove(it) }
     }
     // println("DBG: unknown = $unknownFields")
 
-    val fieldsToWrite = if (appendUnknownFields) fields + unknownFields else fields
+    val fieldsToWrite =
+      if (appendUnknownFields) existingFieldNames + unknownFields else existingFieldNames
     val processedValues =
       values.map { value ->
         val fieldMap = value.mapKeys { (k, _) -> Field(k) }
@@ -171,20 +172,15 @@ internal constructor(
       }
 
     clearRange("A2:ZZ")
-    writeRange(
-      values = processedValues,
-      range = "A2:ZZ",
-    )
+    writeRange(values = processedValues, range = "A2:ZZ")
 
     if (appendUnknownFields) {
-      val col = columnIndexToLetter(fields.size + 1)
+      val col = columnIndexToLetter(existingFieldNames.size + 1)
       writeRange(listOf(unknownFields.map { it.name }), range = "${col}1:ZZ1")
     }
   }
 
-  fun clearRange(
-    range: String = FULL_SHEET,
-  ) {
+  fun clearRange(range: String = FULL_SHEET) {
     val sheetAndRange = "$sheetName!$range"
     var result: ClearValuesResponse? = null
     try {
@@ -258,4 +254,3 @@ private data class Field(val name: String) {
 private fun columnIndexToLetter(idx: Int): String {
   return ('A'..'Z').drop(idx - 1).first().toString()
 }
-
